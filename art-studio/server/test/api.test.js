@@ -1,17 +1,14 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const os = require('os');
-const path = require('path');
-const fs = require('fs');
+const mongoose = require('mongoose');
+const { MongoMemoryServer } = require('mongodb-memory-server');
 
-const dbFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-')), 'test.db');
-const { open } = require('../src/db');
+const M = require('../src/models');
 const { seed } = require('../src/seed');
 const { createApp } = require('../src/app');
-const config = require('../src/config');
 
-let server, base;
-const iso = (d) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+let mongod, server, base, admin, alice, bob, paintings;
+const iso = (d) => new Date(Date.now() + 5.5 * 3600000 + d * 86400000).toISOString().slice(0, 10);
 
 async function call(method, url, token, body) {
   const res = await fetch(base + url, {
@@ -23,37 +20,48 @@ async function call(method, url, token, body) {
 }
 const signup = async (email) => (await call('POST', '/api/auth/signup', null, { name: email, email, password: 'secret1' })).body.token;
 
-let admin, alice, bob;
 before(async () => {
-  const db = open(dbFile);
-  seed(db);
-  server = createApp(db).listen(0);
+  mongod = await MongoMemoryServer.create();
+  await mongoose.connect(mongod.getUri());
+  await seed();
+  server = createApp().listen(0);
   base = `http://localhost:${server.address().port}`;
-  admin = (await call('POST', '/api/auth/login', null, { email: config.adminEmail, password: config.adminPassword })).body.token;
+  admin = (await call('POST', '/api/auth/login', null, { email: 'studio@artstudio.in', password: 'Studio@123' })).body.token;
   alice = await signup('alice@x.com');
   bob = await signup('bob@x.com');
+  paintings = (await call('GET', '/api/paintings', alice)).body;
 });
-after(() => server.close());
+after(async () => { server.close(); await mongoose.disconnect(); await mongod.stop(); });
+
+test('seed data is loaded', () => {
+  assert.equal(paintings.length, 12);
+  assert.equal(paintings.filter((p) => p.status === 'sold').length, 2);
+});
 
 test('401 without login, 403 for wrong role', async () => {
+  const free = paintings.find((p) => p.status === 'available');
   assert.equal((await call('GET', '/api/paintings')).status, 401);
   assert.equal((await call('POST', '/api/paintings', alice, { title: 't', price: 5 })).status, 403);
-  assert.equal((await call('POST', '/api/orders', admin, { paintingId: 1 })).status, 403);
-  assert.equal((await call('POST', '/api/bookings/1/confirm', alice)).status, 403);
+  assert.equal((await call('POST', '/api/orders', admin, { paintingId: free.id })).status, 403);
+  assert.equal((await call('POST', `/api/bookings/${free.id}/confirm`, alice)).status, 403);
 });
 
 test('a painting can only be bought once; cancelling frees it', async () => {
+  const p = paintings.find((x) => x.status === 'available');
+  const sold = paintings.find((x) => x.status === 'sold');
+  assert.equal((await call('POST', '/api/orders', alice, { paintingId: sold.id })).status, 409);
   const [a, b] = await Promise.all([
-    call('POST', '/api/orders', alice, { paintingId: 1 }),
-    call('POST', '/api/orders', bob, { paintingId: 1 }),
+    call('POST', '/api/orders', alice, { paintingId: p.id }),
+    call('POST', '/api/orders', bob, { paintingId: p.id }),
   ]);
   assert.deepEqual([a.status, b.status].sort(), [201, 409]);
-  const winner = a.status === 201 ? [alice, a] : [bob, b];
-  const loser = a.status === 201 ? bob : alice;
-  assert.equal((await call('PUT', '/api/paintings/1', admin, { title: 'x', price: 9 })).status, 409);
-  assert.equal((await call('POST', `/api/orders/${winner[1].body.id}/cancel`, loser)).status, 404);
-  assert.equal((await call('POST', `/api/orders/${winner[1].body.id}/cancel`, winner[0])).status, 200);
-  assert.equal((await call('POST', '/api/orders', loser, { paintingId: 1 })).status, 201);
+  const [winner, win, loser] = a.status === 201 ? [alice, a, bob] : [bob, b, alice];
+  assert.equal((await call('PUT', `/api/paintings/${p.id}`, admin, { title: 'x', price: 9 })).status, 409);
+  assert.equal((await call('POST', `/api/orders/${win.body.id}/cancel`, loser)).status, 404);
+  assert.equal((await call('POST', `/api/orders/${win.body.id}/cancel`, winner)).status, 200);
+  assert.equal((await call('PUT', `/api/paintings/${p.id}`, admin, { title: 'Renamed', price: 9 })).status, 200);
+  assert.equal((await call('POST', '/api/orders', loser, { paintingId: p.id })).status, 201);
+  assert.equal((await call('GET', '/api/orders', winner)).body.length, 1);
 });
 
 test('a wall date can only be booked once; rules and pricing', async () => {
@@ -67,29 +75,26 @@ test('a wall date can only be booked once; rules and pricing', async () => {
   ]);
   assert.deepEqual([a.status, b.status].sort(), [201, 409]);
   const ok = a.status === 201 ? a : b;
-  assert.equal(ok.body.price, 100 * ok.body.rate);
-  const owner = a.status === 201 ? alice : bob, other = a.status === 201 ? bob : alice;
+  assert.equal(ok.body.price, 100 * 150);
+  const [owner, other] = a.status === 201 ? [alice, bob] : [bob, alice];
   assert.equal((await call('POST', `/api/bookings/${ok.body.id}/cancel`, other)).status, 404);
   assert.equal((await call('POST', `/api/bookings/${ok.body.id}/confirm`, admin)).body.status, 'confirmed');
   assert.equal((await call('POST', `/api/bookings/${ok.body.id}/decline`, admin)).status, 409);
   assert.equal((await call('POST', `/api/bookings/${ok.body.id}/cancel`, owner)).body.status, 'cancelled');
-  // the freed date can be booked again
-  assert.equal((await call('POST', '/api/bookings', other, body(10))).status, 201);
+  assert.equal((await call('POST', '/api/bookings', other, body(10))).status, 201); // freed date
 });
 
 test('customers cannot cancel a booking within 3 days', async () => {
-  const db = open(dbFile);
-  const user = db.prepare(`SELECT id FROM users WHERE email='alice@x.com'`).get();
-  const r = db.prepare(`INSERT INTO bookings (user_id,date,wall_sqft,address,rate,price,status) VALUES (?,?,?,?,?,?, 'requested')`)
-    .run(user.id, iso(2), 50, 'a', 40, 2000);
-  assert.equal((await call('POST', `/api/bookings/${r.lastInsertRowid}/cancel`, alice)).status, 409);
+  const alis = await M.User.findOne({ email: 'alice@x.com' });
+  const b = await M.Booking.create({ user: alis.id, date: iso(2), wallSqft: 50, address: 'a', rate: 150, price: 7500, status: 'requested' });
+  assert.equal((await call('POST', `/api/bookings/${b.id}/cancel`, alice)).status, 409);
 });
 
 test('pottery request lifecycle', async () => {
-  const good = { itemId: 'mug', glaze: 'Celadon', quantity: 4, neededBy: iso(20) };
+  const good = { itemId: 'i-01', glazeId: 'g-01', quantity: 4, neededBy: iso(20) };
   assert.equal((await call('POST', '/api/pottery', alice, { ...good, neededBy: iso(13) })).status, 400);
   assert.equal((await call('POST', '/api/pottery', alice, { ...good, quantity: 13 })).status, 400);
-  assert.equal((await call('POST', '/api/pottery', alice, { ...good, glaze: 'nope' })).status, 400);
+  assert.equal((await call('POST', '/api/pottery', alice, { ...good, glazeId: 'nope' })).status, 400);
   const r = await call('POST', '/api/pottery', alice, good);
   assert.equal(r.status, 201);
   assert.equal((await call('PUT', `/api/pottery/${r.body.id}`, bob, good)).status, 404);

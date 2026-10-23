@@ -1,45 +1,65 @@
-# Art Studio
+# Art Studio (MERN)
 
-Small full-stack site for an art studio: buy one-of-a-kind paintings, book a wall painting, and request custom pottery. Two roles: **customer** and **studio (admin)**.
+An art studio site: buy one-of-a-kind paintings, book a wall painting, and request custom pottery. Two roles: **customer** and **studio (admin)**.
 
-Stack: Node.js + Express, SQLite (`better-sqlite3`), plain HTML/JS front end served by the same server.
+**Stack:** MongoDB + Mongoose, Express, React (Vite), Node.js. Loads the provided `seedData` (12 paintings with images, pottery items, glazes, the ₹150/sq ft mural rate and the studio account).
 
-## Run it (clean machine)
+## Run it on a clean machine
 
-Requires Node 20+ (tested on 22).
+Requires Node 20+ and a MongoDB (local install, or a free [MongoDB Atlas](https://www.mongodb.com/atlas) cluster).
 
 ```bash
 cd art-studio
-npm install
-cp .env.example .env     # then edit JWT_SECRET and ADMIN_PASSWORD
-npm start                # http://localhost:3000
+npm run install:all          # installs server + client dependencies
+cp .env.example .env         # set MONGODB_URI and JWT_SECRET
+npm run build                # builds the React app into client/dist
+npm start                    # http://localhost:5000
 ```
 
-The database file is created and seeded on first start (`data/studio.db`). No separate DB setup is needed.
+Express serves the built React app and the painting images, and seeds the database on first start (re-running is safe).
 
-- **Studio login:** the `ADMIN_EMAIL` / `ADMIN_PASSWORD` from your `.env` (defaults `studio@example.com` / `studio123` if no `.env`).
-- **Customer:** use "Sign up" on the login page.
+**Studio login (from the seed data):** `studio@artstudio.in` / `Studio@123`. Customers sign up on the login page.
 
-Run the tests: `npm test`
+### Development mode (hot reload)
 
-## Seed data
+```bash
+npm run dev:server    # API on :5000
+npm run dev:client    # React on http://localhost:5173 (proxies /api and /images)
+```
 
-`data/seed.json` holds the wall rate per sq ft, pottery items, glazes and starter paintings. To use the official seed dataset, replace the values in that file (keep the same shape) and delete `data/studio.db` so it re-seeds.
+### Tests
+
+```bash
+npm test
+```
+
+Runs the API tests against a temporary in-memory MongoDB (downloaded once by `mongodb-memory-server`, so the first run needs internet). They cover 401/403/404, the sold-once rule, the one-booking-per-date rule (with simultaneous requests), date/size/quantity limits and the pottery status rules.
+
+## Layout
+
+```
+server/src/   app.js (routes + rules), models.js (schemas + indexes), seed.js, config.js
+server/seed/  seed.json + images/ (the provided dataset)
+server/test/  API tests
+client/src/   React app: App.jsx, pages/ (Paintings, Orders, Bookings, Pottery, Auth)
+```
 
 ## API summary
 
-All routes need `Authorization: Bearer <token>` except sign-up/login.
-`401` not logged in, `403` wrong role, `404` missing or someone else's record, `409` state conflict (painting sold, date taken, wrong status), `400` bad input.
+All routes need `Authorization: Bearer <token>` except sign-up and login. `401` not logged in, `403` wrong role, `404` missing or someone else's record, `409` conflict (painting sold, date taken, wrong status), `400` bad input.
 
 | Route | Who |
 |---|---|
-| `POST /api/auth/signup`, `POST /api/auth/login`, `GET /api/me` | anyone / any |
+| `POST /api/auth/signup`, `POST /api/auth/login`, `GET /api/me`, `GET /api/catalog` | anyone / any logged-in |
 | `GET /api/paintings` | any |
 | `POST /api/paintings`, `PUT /api/paintings/:id` (available only) | admin |
-| `GET/POST /api/orders`, `POST /api/orders/:id/cancel` | list: any (own vs all); create/cancel: customer |
-| `GET/POST /api/bookings`, `POST /api/bookings/:id/cancel` | list: any; create/cancel: customer |
+| `GET /api/orders` | any (customers see their own) |
+| `POST /api/orders`, `POST /api/orders/:id/cancel` | customer |
+| `GET /api/bookings`, `GET /api/bookings/taken-dates` | any |
+| `POST /api/bookings`, `POST /api/bookings/:id/cancel` | customer |
 | `POST /api/bookings/:id/confirm` or `decline` | admin |
-| `GET/POST /api/pottery`, `PUT /api/pottery/:id`, `POST /api/pottery/:id/cancel` | list: any; rest: customer |
+| `GET /api/pottery` | any |
+| `POST /api/pottery`, `PUT /api/pottery/:id`, `POST /api/pottery/:id/cancel` | customer |
 | `POST /api/pottery/:id/accept` or `decline` | admin |
 
-See [DESIGN.md](DESIGN.md) for design decisions.
+See [DESIGN.md](DESIGN.md).
