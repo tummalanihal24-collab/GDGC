@@ -1,3 +1,4 @@
 target/
 config/db.properties
 *.class
+__pycache__/
