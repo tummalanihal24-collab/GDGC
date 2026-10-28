@@ -81,6 +81,15 @@ public class PayslipService {
         }
     }
 
+    public byte[] pdfBytes(Payslip s) {
+        try (java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            writePdf(s, out);
+            return out.toByteArray();
+        } catch (IOException | DocumentException e) {
+            throw new ServiceException("Could not build PDF: " + e.getMessage());
+        }
+    }
+
     void writePdf(Payslip s, OutputStream out) throws DocumentException {
         Payroll p = s.payroll();
         Employee e = s.employee();

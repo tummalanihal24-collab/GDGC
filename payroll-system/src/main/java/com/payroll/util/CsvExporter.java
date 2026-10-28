@@ -16,11 +16,16 @@ public final class CsvExporter {
 
     public static void write(Path file, TableData data) throws IOException {
         try (Writer w = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
-            w.write(line(data.columns()));
-            for (Object[] row : data.rows()) {
-                w.write(line(java.util.Arrays.asList(row)));
-            }
+            w.write(toCsv(data));
         }
+    }
+
+    public static String toCsv(TableData data) {
+        StringBuilder sb = new StringBuilder(line(data.columns()));
+        for (Object[] row : data.rows()) {
+            sb.append(line(java.util.Arrays.asList(row)));
+        }
+        return sb.toString();
     }
 
     private static String line(List<?> cells) {

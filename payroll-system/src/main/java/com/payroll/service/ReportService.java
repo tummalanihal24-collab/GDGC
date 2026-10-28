@@ -60,6 +60,17 @@ public class ReportService {
         return out;
     }
 
+    /** Month, headcount and net total for the {@code months} months ending at {@code last}, oldest first. */
+    public List<Object[]> netTrend(YearMonth last, int months) {
+        List<Object[]> out = new ArrayList<>();
+        for (int i = months - 1; i >= 0; i--) {
+            YearMonth m = last.minusMonths(i);
+            BigDecimal[] s = payrollDao.getSummary(m.toString());
+            out.add(new Object[]{m.toString(), s[0].intValue(), s[3]});
+        }
+        return out;
+    }
+
     public List<PayrollAudit> auditLog(String month, String action, String keyword) {
         return auditDao.getAuditLog(month, action, keyword, 500);
     }

@@ -24,6 +24,16 @@ public class AttendanceDAO {
                 AttendanceDAO::map, empId, from, to);
     }
 
+    /** Every recorded day for every employee in the period (used by the monthly register). */
+    public List<Attendance> getBetween(LocalDate from, LocalDate to) {
+        return Sql.query(SELECT + " WHERE a.att_date BETWEEN ? AND ? ORDER BY u.name, a.att_date", AttendanceDAO::map, from, to);
+    }
+
+    /** Removes the record so the day counts as unmarked (present) again. */
+    public void clear(int empId, LocalDate date) {
+        Sql.update("DELETE FROM attendance WHERE emp_id = ? AND att_date = ?", empId, date);
+    }
+
     public List<Attendance> getForDate(LocalDate date) {
         return Sql.query(SELECT + " WHERE a.att_date = ? ORDER BY u.name", AttendanceDAO::map, date);
     }

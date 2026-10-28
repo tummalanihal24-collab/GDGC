@@ -1,13 +1,18 @@
 # Payroll Management System
 
-Java 17 desktop application: **Swing UI (FlatLaf)** → **services** → **DAOs (JDBC + HikariCP)** → **MySQL**.
-Built from the UML set in the project (use case, class, 2 sequence, activity and state diagrams).
+A payroll application with a **Java backend** (REST API, JDBC, MySQL) and a hand-written **HTML / CSS / JavaScript front end**: no framework, no CDN, no build step.
+It covers the monthly cycle from attendance to payslip: employee records, salary structure, attendance, payroll runs with a verify / pay workflow, audit trail, reports and PDF payslips.
+
+| Admin overview | Payroll |
+|---|---|
+| ![Overview](docs/screenshots/admin-overview.png) | ![Payroll](docs/screenshots/payroll.png) |
+| **Attendance register** | **Employee payslip** |
+| ![Register](docs/screenshots/attendance-register.png) | ![Payslip](docs/screenshots/payslip.png) |
 
 ## Quick start
 
-1. Install JDK 17+ and MySQL 8 (MariaDB 10.5+ also works). Make sure the server is running.
-2. Tell the app how to connect. Either edit `src/main/resources/db.properties`, or (better) create
-   `config/db.properties` next to where you run the jar:
+1. Install JDK 17+ and MySQL 8 (MariaDB 10.5+ also works) and start the database server.
+2. Tell the app how to connect. Edit `src/main/resources/db.properties`, or create `config/db.properties` next to where you run the jar:
 
    ```properties
    db.url=jdbc:mysql://localhost:3306/payroll_db?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
@@ -21,86 +26,99 @@ Built from the UML set in the project (use case, class, 2 sequence, activity and
    mvn package
    java -jar target/payroll-system-1.0.0.jar
    ```
-   (or `mvn compile exec:java -Dexec.mainClass=com.payroll.ui.PayrollApp`, or run `PayrollApp` from your IDE)
+4. Open **http://localhost:8080**.
 
-On first start the app creates the database tables from `src/main/resources/schema.sql` and inserts demo data:
+The first start creates the tables and demo data. Set `PORT` to change the port; the server listens on `127.0.0.1` only unless you set `PAYROLL_HOST=0.0.0.0`.
 
 | Role | Username | Password |
 |---|---|---|
 | Admin / HR | `admin` | `admin123` |
 | Employees | `asha`, `rohan`, `priya`, `karan`, `neha` | `emp123` |
 
-Change these passwords for anything beyond a demo (Change Password button, or Employees → Reset Password).
+Change these before using the system for anything real.
 
-## Features
+## What it does
 
-**Admin / HR**
-- **Overview**: headcount, departments, last month's net payroll, records awaiting verification.
-- **Employees**: add, edit, search, filter by department, deactivate/reactivate (soft delete keeps payroll history), reset password.
-- **Departments**: add, edit, delete (blocked while employees belong to it).
-- **Salary Structure**: HRA / DA / PF / tax percentages per employee, reset to defaults.
-- **Attendance**: mark Present / Absent / Leave per day, or mark everyone present.
-- **Run Payroll**: run a month, then Verify → Mark Paid, or Cancel → Reprocess, or Recalculate; bulk actions; month totals.
-- **Reports**: payroll, attendance and employee reports, CSV export, net-salary-by-department chart.
-- **Audit Log**: every payroll action (generated, recalculated, verified, paid, cancelled, reprocessed) with who and when.
+**Admin / HR**: overview with a six-month trend and department chart; employees (add, edit, search, deactivate, reset password); departments; salary structure per employee; an **attendance register** (a month grid; click a day to cycle present, absent, leave); **payroll** (run a month, then verify, pay, cancel, reprocess, recalculate, singly or in bulk); reports with CSV download; an audit journal of every payroll action.
 
-**Employee**
-- View/edit own name and email, view own attendance by month, view payslips (once HR has verified the month), download payslip as PDF, change password.
+**Employee**: overview of latest pay and attendance; a personal calendar; **payslips** (only after HR verifies the month) with PDF download and print; profile and password change.
 
-**System**
-- Scheduler: while the app is running, on the 1st of each month it generates the previous month's payroll (`AUTO` mode, user `SYSTEM`).
-- Login lockout after 5 wrong passwords (15 minutes). Passwords are BCrypt hashes.
+**System**: on the 1st of each month, while the server is running, the previous month's payroll is generated automatically (`AUTO`, user `SYSTEM`).
 
 ## How salary is calculated (`PayrollCalculator`)
 
 ```
 working days = Monday-Friday days in the month
-basic  = basicSalary x (workingDays - absentDays) / workingDays     (days with no attendance record count as present; LEAVE is paid)
-hra    = basic x HRA%        da = basic x DA%
+basic  = basicSalary x (workingDays - absentDays) / workingDays     (unmarked days count as present; LEAVE is paid)
+hra    = basic x HRA%        da  = basic x DA%
 gross  = basic + hra + da
 pf     = basic x PF%         tax = gross x tax%
 net    = gross - (pf + tax)
 ```
 Defaults for a new employee: HRA 20, DA 10, PF 12, tax 5. Money is `BigDecimal` / `DECIMAL(12,2)`, rounded half-up to 2 places.
 
-**Payroll status flow** (state diagram): `GENERATED → VERIFIED → PAID`; `GENERATED/VERIFIED → CANCELLED → (reprocess) → GENERATED`. PAID is final.
-A run is idempotent: `UNIQUE(emp_id, pay_month)` plus skip-if-exists means running twice never duplicates, and the whole run is one DB transaction.
+**Payroll status flow**: `GENERATED -> VERIFIED -> PAID`; `GENERATED / VERIFIED -> CANCELLED -> (reprocess) -> GENERATED`. PAID is final.
+A run is one database transaction and idempotent (`UNIQUE(emp_id, pay_month)` plus skip-if-exists).
 
-## UML diagrams
+## Architecture
 
-Use case, class, two sequence, activity and state diagrams of the implemented system are in [`docs/diagrams`](docs/diagrams) (PNG + SVG).
-
-## Project layout
+```
+browser (HTML + CSS + ES modules)  --JSON over HTTP-->  web (Javalin routes)  -->  service  -->  dao  -->  MySQL
+```
 
 ```
 src/main/java/com/payroll
-  model/    Person (abstract), Employee, Admin, Department, SalaryStructure, Attendance, Payroll, PayrollAudit, Payslip
+  web/      WebApp (start-up, headers, errors), Api (login, /api/me), AdminApi (/api/admin), Dto (what the browser may see)
+  service/  AuthService, EmployeeService, DepartmentService, AttendanceService, PayrollService, PayrollCalculator,
+            ReportService, PayslipService, PayrollScheduler
   dao/      UserDAO, EmployeeDAO, DepartmentDAO, SalaryStructureDAO, AttendanceDAO, PayrollDAO, AuditDAO  (PreparedStatements only)
-  service/  AuthService, EmployeeService, DepartmentService, AttendanceService, PayrollService,
-            PayrollCalculator, ReportService, PayslipService, PayrollScheduler
-  db/       DBConnection (pool + transactions), DatabaseInitializer (schema + demo data)
-  ui/       PayrollApp, LoginFrame, AdminDashboard, EmployeePortal and one panel per tab
-  util/     Money, Validators, CsvExporter
-src/main/resources/schema.sql, db.properties
-src/test/java/com/payroll  unit + workflow + UI smoke tests
+  db/       DBConnection (HikariCP pool + transactions), DatabaseInitializer (schema + demo data)
+  model/    Person (abstract), Employee, Admin, Department, SalaryStructure, Attendance, Payroll, PayrollAudit, Payslip
+src/main/resources
+  public/   index.html, css/ledger.css, js/ (main router, api, ui, charts, util) and js/views/ (one file per page)
+  schema.sql, db.properties
 ```
+
+### API
+
+All JSON. Writes must send `X-Requested-With: XMLHttpRequest` (the front end does). Errors return `{ "error": "..." }`.
+
+| Area | Endpoints |
+|---|---|
+| Session | `GET /api/session`, `POST /api/login`, `POST /api/logout` |
+| Account | `GET /api/me`, `PUT /api/me/profile`, `POST /api/me/password` |
+| Employee | `GET /api/me/overview`, `/api/me/attendance?month=`, `/api/me/payslips`, `/api/me/payslips/{yyyy-MM}`, `.../pdf` |
+| Admin (role ADMIN) | `/api/admin/overview`, `/employees`, `/departments`, `/salary-structures`, `/attendance`, `/payroll`, `/payroll/run`, `/payroll/{id}/{verify\|pay\|cancel\|reprocess\|recalculate}`, `/payroll/bulk`, `/reports/{payroll\|attendance\|employees}[?format=csv]`, `/audit` |
+
+### Security
+
+- Passwords are BCrypt hashes; five wrong passwords lock the account for 15 minutes; deactivated employees are signed out on their next request.
+- Session cookie is `HttpOnly` and `SameSite=Strict`; the session id changes on login; writes need the `X-Requested-With` header.
+- Role checks happen on the server (`/api/admin/*` is admin-only; payslip endpoints are employee-only and show only verified or paid months).
+- Responses carry a strict Content-Security-Policy (the front end has no inline script or style), `nosniff`, no-framing and same-origin referrer headers.
+- All SQL uses `PreparedStatement`; the browser never receives entities (and so never a password hash); user text is HTML-escaped when rendered.
+
+## Front end
+
+No libraries. The look is a ledger: ruled paper, serif headings, monospace tabular figures, hairline tables, "stamp" status marks, a payslip drawn as a paper slip. Pages are ES modules loaded on demand by a hash router; charts are SVG written by `charts.js`; forms open in a slide-over drawer. It works down to phone width and prints a payslip cleanly.
 
 ## Tests
 
 ```bash
-mvn test                         # 19 tests on in-memory H2 (MySQL mode): salary maths + full workflow
-xvfb-run -a mvn test             # on Linux without a screen: also runs a UI smoke test that builds every window and saves screenshots to target/screenshots
-# against a real MySQL (its tables in that database are dropped first!):
-PAYROLL_TEST_URL="jdbc:mysql://localhost:3306/payroll_test?useSSL=false&allowPublicKeyRetrieval=true" \
-PAYROLL_TEST_PASSWORD=secret mvn test -Dtest=PayrollWorkflowTest
+mvn test        # 27 tests on in-memory H2 (MySQL mode)
 ```
+- `PayrollCalculatorTest`: the salary maths.
+- `PayrollWorkflowTest`: services and DAOs end to end (login and lockout, payroll runs, status changes, payslips, reports, rollback).
+- `WebApiTest`: the HTTP API as the browser uses it (auth, roles, CSRF header, no hash leakage, payroll to payslip, PDF, CSV).
+- Against a real MySQL (tables in that database are dropped first!):
+  `PAYROLL_TEST_URL="jdbc:mysql://localhost:3306/payroll_test?useSSL=false&allowPublicKeyRetrieval=true" PAYROLL_TEST_PASSWORD=secret mvn test -Dtest=PayrollWorkflowTest`
+- `e2e/e2e.js`: drives the real UI in headless Chromium (needs a running server on a fresh database and `npm i playwright`).
 
-## Differences from the UML diagrams (deliberate)
+## Notes on design choices
 
-| Diagram | Implementation | Why |
-|---|---|---|
-| Salary computed by Java **and** by a MySQL trigger / stored procedure | Java only (`PayrollCalculator`); audit rows written by `PayrollService` in the same transaction | One source of truth; manual and scheduled runs cannot disagree; testable |
-| MySQL Event Scheduler at 00:00 on the 1st | In-app `PayrollScheduler` (hourly check, runs on the 1st) | Works without DB privileges / `event_scheduler=ON`. Payroll is only auto-generated if the app is running that day; HR can always run it manually |
-| String IDs, `UUID` on Person | Integer auto-increment IDs | Simpler joins; `users.id` is shared by `employee.emp_id` |
-| DAOs extend `DBConnection` | DAOs *use* `DBConnection` | Dependency, not inheritance |
-| "Created" / "Validated" states | Validation happens inside a run, before a row is stored | Only meaningful states are persisted |
+| Choice | Why |
+|---|---|
+| Salary is calculated in Java only (`PayrollCalculator`), audit rows are written in the same transaction | One source of truth; testable without a database |
+| Scheduler runs inside the server instead of a MySQL Event | Works without special DB privileges; HR can always run payroll manually |
+| Integer ids, one `users` table shared by admins and employees | Simple joins; `employee.emp_id` is `users.id` |
+| No front-end framework | Nothing to install or build; the whole UI is readable source |

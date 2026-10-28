@@ -1,5 +1,7 @@
 # UML diagrams
 
+> **Note:** these were drawn when the front end was a Swing desktop UI. The use cases, the service / DAO / database parts of the class diagram, the payroll sequence, the activity flow and the state diagram still apply unchanged. Only the user-interface layer differs: `LoginFrame`, `AdminDashboard`, `EmployeePortal` and the panels are now the browser pages under `src/main/resources/public` plus the `web` package (`WebApp`, `Api`, `AdminApi`, `Dto`) that serves them.
+
 Drawn from the implemented code (not from the original draft). Each diagram is provided as PNG (2x) and SVG.
 
 | # | File | Shows |

@@ -55,6 +55,11 @@ public class EmployeeService {
         employeeDao.setActive(empId, active);
     }
 
+    /** Any account (admin or employee) by id; null if it does not exist. */
+    public Person getAccount(int userId) {
+        return userDao.findById(userId);
+    }
+
     public Employee get(int empId) {
         return employeeDao.findById(empId);
     }
