@@ -66,6 +66,10 @@ Defaults for a new employee: HRA 20, DA 10, PF 12, tax 5. Money is `BigDecimal` 
 **Payroll status flow** (state diagram): `GENERATED → VERIFIED → PAID`; `GENERATED/VERIFIED → CANCELLED → (reprocess) → GENERATED`. PAID is final.
 A run is idempotent: `UNIQUE(emp_id, pay_month)` plus skip-if-exists means running twice never duplicates, and the whole run is one DB transaction.
 
+## UML diagrams
+
+Use case, class, two sequence, activity and state diagrams of the implemented system are in [`docs/diagrams`](docs/diagrams) (PNG + SVG).
+
 ## Project layout
 
 ```
